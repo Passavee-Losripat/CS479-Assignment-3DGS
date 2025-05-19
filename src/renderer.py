@@ -258,19 +258,48 @@ class GSRasterizer(object):
 
                 # ========================================================
                 # TODO: Sort the projected Gaussians that lie in the current tile by their depths, in ascending order
+                sorted_idx = torch.argsort(depths[in_mask], descending=False)
+                mean_tile = mean_2d[in_mask][sorted_idx]              # (G, 2)
+                cov_tile  = cov_2d[in_mask][sorted_idx]               # (G, 2, 2)
+                col_tile  = color[in_mask][sorted_idx]                # (G, 3)
+                opa_tile  = opacities[in_mask].squeeze(-1)[sorted_idx]# (G,)
                 # ========================================================
                 
                 # ========================================================
                 # TODO: Compute the displacement vector from the 2D mean coordinates to the pixel coordinates
+                # Precompute pixel coords in this tile
+                tile_pix = pix_coord[h:h+self.tile_size, w:w+self.tile_size]   # (T, T, 2)
+                P = self.tile_size * self.tile_size
+                pix_flat = tile_pix.reshape(P, 2).float()                       # (P, 2)
+                # disp: (G, P, 2)
+                disp = pix_flat[None, :, :] - mean_tile[:, None, :]
                 # ========================================================
 
                 # ========================================================
                 # TODO: Compute the Gaussian weight for each pixel in the tile
+                # invert covariances: (G, 2, 2)
+                inv_cov = torch.linalg.inv(cov_tile)
+                # Mahalanobis exponent: (G, P)
+                expo = -0.5 * torch.einsum('gpi,gij,gpj->gp', disp, inv_cov, disp)
+                weights = torch.exp(expo)                                      # (G, P)
+                # modulate by per-splat opacity
+                alpha_tilde = weights * opa_tile[:, None]                      # (G, P)
                 # ========================================================
 
                 # ========================================================
                 # TODO: Perform alpha blending
-                tile_color = None
+                acc_color = torch.zeros(P, 3, device=mean_2d.device)
+                acc_alpha = torch.zeros(P,   device=mean_2d.device)
+
+                for j in range(alpha_tilde.shape[0]):
+                    a_j = alpha_tilde[j]        # (P,)
+                    c_j = col_tile[j]           # (3,)
+                    # contribution for this splat
+                    w_j = (1.0 - acc_alpha) * a_j  # (P,)
+                    acc_color += w_j[:, None] * c_j[None, :]
+                    acc_alpha += w_j
+
+                tile_color = acc_color  # (P, 3)
                 # ========================================================
 
                 render_color[h:h+self.tile_size, w:w+self.tile_size] = tile_color.reshape(self.tile_size, self.tile_size, -1)
