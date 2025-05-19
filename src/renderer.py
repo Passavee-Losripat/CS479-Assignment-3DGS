@@ -189,6 +189,10 @@ class GSRasterizer(object):
         """ 
         # ========================================================
         # TODO: Transform 3D mean coordinates to camera space
+        ones    = torch.ones((mean_3d.shape[0], 1), device=mean_3d.device, dtype=mean_3d.dtype)
+        hom_pts = torch.cat([mean_3d, ones], dim=-1)      # (N,4)
+        cam_pts = (hom_pts @ w2c)[:, :3]                  # (N,3)
+        tx, ty, tz = cam_pts.unbind(-1)                  # each is (N,)
         # ========================================================
 
         # Transpose the rigid transformation part of the world-to-camera matrix
@@ -196,7 +200,22 @@ class GSRasterizer(object):
         W = w2c[:3, :3].T
         # ========================================================
         # TODO: Compute Jacobian of view transform and projection
-        cov_2d = None
+        # Build per-Gaussian Jacobian:
+        # [ fx/tz,     0,  -fx*tx/tz^2 ]
+        # [    0,  fy/tz,  -fy*ty/tz^2 ]
+        # [    0,      0,           0  ]
+        J[:, 0, 0] = f_x / tz
+        J[:, 0, 2] = -f_x * tx / (tz * tz)
+
+        J[:, 1, 1] = f_y / tz
+        J[:, 1, 2] = -f_y * ty / (tz * tz)
+
+        # Rotate world-space cov to camera-space
+        WT      = W.transpose(0, 1)               # (3,3)
+        cov_cam = W @ cov_3d @ WT                 # (N,3,3)
+
+        # Project into image-plane covariance
+        cov_2d  = J @ cov_cam @ J.transpose(1, 2) # (N,3,3)
         # ========================================================
 
         # add low pass filter here according to E.q. 32
