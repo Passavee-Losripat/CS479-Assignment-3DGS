@@ -137,11 +137,23 @@ class GSRasterizer(object):
         """
         # ========================================================
         # TODO: Implement the projection to NDC space
-        p_ndc = None
-        p_view = None
+        # 1) Promote to homogeneous (N,4)
+        ones = torch.ones((points.shape[0], 1), device=points.device, dtype=points.dtype)
+        p_world = torch.cat([points, ones], dim=-1)  # (N,4)
+
+        # 2) World → Camera (view space) as row‑vectors
+        p_view = p_world @ w2c           # (N,4)
+
+        # 3) Camera → Clip space
+        p_proj = p_view @ proj_mat       # (N,4)
+
+        # 4) NDC by homogeneous divide
+        #    we keep the 4th component so you can inspect w if needed
+        p_ndc = p_proj / (p_proj[..., 3:4] + 1e-8)  # avoid div0
 
         # TODO: Cull points that are close or behind the camera
-        in_mask = None
+         # 5) Mask: only keep points with positive depth beyond near plane
+        in_mask = p_view[:, 2] > z_near
         # ========================================================
 
         return p_ndc, p_view, in_mask
