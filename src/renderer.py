@@ -299,7 +299,8 @@ class GSRasterizer(object):
                     acc_color += w_j[:, None] * c_j[None, :]
                     acc_alpha += w_j
 
-                tile_color = acc_color  # (P, 3)
+                # composite over white background
+                tile_color = acc_color + (1.0 - acc_alpha)[:, None]
                 # ========================================================
 
                 render_color[h:h+self.tile_size, w:w+self.tile_size] = tile_color.reshape(self.tile_size, self.tile_size, -1)
